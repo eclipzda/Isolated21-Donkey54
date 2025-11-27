@@ -532,7 +532,7 @@ def admin_list_users(message):
 
 # ===== NEW ADMIN FEATURES =====
 
-# 1. Ban / Unban (already partly done above)
+# 1. Ban / Unban
 
 @bot.message_handler(commands=["ban"])
 def cmd_ban(message):
@@ -1327,70 +1327,131 @@ def address_confirm(call):
         update_info_panel(chat_id, user, "❌ Address update cancelled.")
         return
 
+# ===== ADMIN HELP (BOXED STYLE) =====
+
 @bot.message_handler(commands=["adminhelp"])
 def cmd_adminhelp(message):
     if not is_admin(message.from_user.id):
         return
 
     text = (
-        "🛡 *Admin Commands Overview*\n\n"
-        "🔰 *Admin Control*\n"
-        "/admin_on – Mirror all user actions\n"
-        "/admin_off – Stop mirroring\n"
-        "/logstream_on – Enable log stream\n"
-        "/logstream_off – Disable log stream\n\n"
-
-        "👤 *User Management*\n"
+        "🛡 ADMIN COMMANDS\n"
+        "=================\n"
+        "\n"
+        "🔰 Admin Control\n"
+        "/admin_on – mirror all user actions\n"
+        "/admin_off – stop mirroring\n"
+        "/logstream_on – enable log stream\n"
+        "/logstream_off – disable log stream\n"
+        "\n"
+        "👤 User Management\n"
         "/ban <id>\n"
         "/unban <id>\n"
         "/view_user <id>\n"
         "/reset_user <id>\n"
         "/note <id> <txt>\n"
-        "/list_users\n\n"
-
-        "💵 *Balance & Profit*\n"
+        "/list_users\n"
+        "\n"
+        "💵 Balance & Profit\n"
         "/add_balance <id> <amt>\n"
         "/set_balance <id> <amt>\n"
         "/add_profit <id> <amt>\n"
         "/set_profit <id> <amt>\n"
-        "/set_deposit <id> <amt>\n\n"
-
-        "📤 *Messaging*\n"
+        "/set_deposit <id> <amt>\n"
+        "\n"
+        "📤 Messaging\n"
         "/reply <id> <txt>\n"
         "/dm <id> <txt>\n"
         "/broadcast <txt>\n"
         "/broadcast_media\n"
-        "/broadcast_group <group> <txt>\n\n"
-
-        "📊 *System*\n"
+        "/broadcast_group <group> <txt>\n"
+        "\n"
+        "📊 System\n"
         "/analytics\n"
         "/fixdb\n"
         "/db_dump\n"
         "/backup_now\n"
-        "/prune\n\n"
-
-        "⚙️ *Bot Settings*\n"
+        "/prune\n"
+        "\n"
+        "⚙️ Bot Settings\n"
         "/set_sniper_minbal <amt>\n"
         "/set_profit_range <min> <max>\n"
-        "/set_withdraw_min <amt>\n\n"
-
-        "🛡 *Admins*\n"
+        "/set_withdraw_min <amt>\n"
+        "\n"
+        "🛡 Admins\n"
         "/addadmin <id>\n"
         "/removeadmin <id>\n"
-        "/listadmins\n\n"
-
-        "🛠 *Developer*\n"
+        "/listadmins\n"
+        "\n"
+        "🛠 Developer\n"
         "/debug\n"
         "/reboot\n"
         "/reload_db\n"
     )
 
-    bot.reply_to(message, text, parse_mode="Markdown")
+    bot.reply_to(message, f"```{text}```", parse_mode="Markdown")
 
+# ===== UNKNOWN COMMAND HANDLER =====
+
+# List of known commands so unknown handler doesn't trigger on real ones
+KNOWN_COMMANDS = {
+    "/start", "/help",
+    "/admin_on", "/admin_off",
+    "/logstream_on", "/logstream_off",
+    "/reply",
+    "/add_balance", "/set_balance",
+    "/add_profit", "/set_profit",
+    "/set_deposit",
+    "/view_user", "/reset_user", "/list_users",
+    "/ban", "/unban",
+    "/broadcast", "/broadcast_media", "/broadcast_group",
+    "/analytics",
+    "/note",
+    "/dm",
+    "/set_sniper_minbal", "/set_profit_range", "/set_withdraw_min",
+    "/fixdb", "/backup_now", "/db_dump", "/prune",
+    "/addadmin", "/removeadmin", "/listadmins",
+    "/debug", "/reboot", "/reload_db",
+    "/adminhelp"
+}
+
+@bot.message_handler(func=lambda msg: True, content_types=['text'])
+def unknown_command_handler(message):
+    uid = message.from_user.id
+    text = message.text or ""
+
+    # If this is a known command, ignore (other handlers will process it)
+    if text.startswith("/"):
+        cmd = text.split()[0]
+        if cmd in KNOWN_COMMANDS:
+            return
+
+    # Admins: ignore unknown handler entirely
+    if is_admin(uid):
+        return
+
+    # If awaiting address input, ignore (next_step_handler handles)
+    u = db.get(str(uid), {})
+    if u.get("temp_prompt_msg_id") is not None:
+        return
+
+    # Non-command text: do nothing (listener already mirrors it if enabled)
+    if not text.startswith("/"):
+        return
+
+    # Ban check for unknown commands
+    if is_banned(uid):
+        bot.reply_to(message, "🚫 You are banned from using Saturn Sniper.")
+        return
+
+    # Fake unknown command response
+    bot.reply_to(
+        message,
+        "❓ Unknown command.\nUse /help to see available options."
+    )
 
 # ===== START BOT =====
 
 if __name__ == "__main__":
     print("Saturn Auto Trade bot is running with extended admin features...")
     bot.polling(none_stop=True)
-
