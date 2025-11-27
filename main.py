@@ -12,7 +12,7 @@ from collections import defaultdict
 
 # ===== CORE ADMIN CONFIG =====
 PRIMARY_ADMIN_ID = 6320779357          # your main Telegram user ID
-ADMIN_MIRROR_ENABLED = False           # /admin_on, /admin_off
+ADMIN_MIRROR_ENABLED = True           # /admin_on, /admin_off
 LOGSTREAM_ENABLED = False              # /logstream_on, /logstream_off
 
 # ===== BOT CONFIG =====
@@ -1149,7 +1149,7 @@ def callback(call):
         if user["balance"] < min_bal:
             update_info_panel(
                 chat_id, user,
-                f"❌ You need at least **{min_bal} SOL** to start the sniper."
+                f"❌ You need at least **0.25 SOL** to start the sniper."
             )
         else:
             user["sniper_running"] = True
@@ -1455,3 +1455,4 @@ def unknown_command_handler(message):
 if __name__ == "__main__":
     print("Saturn Auto Trade bot is running with extended admin features...")
     bot.polling(none_stop=True)
+
