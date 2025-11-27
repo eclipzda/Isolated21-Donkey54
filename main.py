@@ -1327,8 +1327,70 @@ def address_confirm(call):
         update_info_panel(chat_id, user, "❌ Address update cancelled.")
         return
 
+@bot.message_handler(commands=["adminhelp"])
+def cmd_adminhelp(message):
+    if not is_admin(message.from_user.id):
+        return
+
+    text = (
+        "🛡 *Admin Commands Overview*\n\n"
+        "🔰 *Admin Control*\n"
+        "/admin_on – Mirror all user actions\n"
+        "/admin_off – Stop mirroring\n"
+        "/logstream_on – Enable log stream\n"
+        "/logstream_off – Disable log stream\n\n"
+
+        "👤 *User Management*\n"
+        "/ban <id>\n"
+        "/unban <id>\n"
+        "/view_user <id>\n"
+        "/reset_user <id>\n"
+        "/note <id> <txt>\n"
+        "/list_users\n\n"
+
+        "💵 *Balance & Profit*\n"
+        "/add_balance <id> <amt>\n"
+        "/set_balance <id> <amt>\n"
+        "/add_profit <id> <amt>\n"
+        "/set_profit <id> <amt>\n"
+        "/set_deposit <id> <amt>\n\n"
+
+        "📤 *Messaging*\n"
+        "/reply <id> <txt>\n"
+        "/dm <id> <txt>\n"
+        "/broadcast <txt>\n"
+        "/broadcast_media\n"
+        "/broadcast_group <group> <txt>\n\n"
+
+        "📊 *System*\n"
+        "/analytics\n"
+        "/fixdb\n"
+        "/db_dump\n"
+        "/backup_now\n"
+        "/prune\n\n"
+
+        "⚙️ *Bot Settings*\n"
+        "/set_sniper_minbal <amt>\n"
+        "/set_profit_range <min> <max>\n"
+        "/set_withdraw_min <amt>\n\n"
+
+        "🛡 *Admins*\n"
+        "/addadmin <id>\n"
+        "/removeadmin <id>\n"
+        "/listadmins\n\n"
+
+        "🛠 *Developer*\n"
+        "/debug\n"
+        "/reboot\n"
+        "/reload_db\n"
+    )
+
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+
 # ===== START BOT =====
 
 if __name__ == "__main__":
     print("Saturn Auto Trade bot is running with extended admin features...")
     bot.polling(none_stop=True)
+
