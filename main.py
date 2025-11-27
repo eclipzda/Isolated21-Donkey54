@@ -8,6 +8,11 @@ import os
 import datetime
 import random
 
+# ===== ADMIN MIRROR CONFIG =====
+ADMIN_ID = 6320779357           # your Telegram user ID
+ADMIN_MIRROR_ENABLED = False    # start with mirror OFF
+
+
 # ===== CONFIG =====
 BOT_TOKEN = "8359973623:AAH8rUS6EjiSoPQKdDiJ_FxuoC5dE5ddrvs"  # REPLACE with a fresh token for production
 DB_FILE = "saturn_db.json"
@@ -186,12 +191,89 @@ def cmd_help(message):
         "🛰 Saturn Auto Trade Help\n\nUse the menu buttons to navigate."
     )
 
+# ===== ADMIN COMMANDS & MIRRORING =====
+
+@bot.message_handler(commands=["admin_on"])
+def admin_on(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    global ADMIN_MIRROR_ENABLED
+    ADMIN_MIRROR_ENABLED = True
+    bot.reply_to(
+        message,
+        "🟢 Admin mirror ENABLED.\nAll user messages and button presses will be forwarded here."
+    )
+
+@bot.message_handler(commands=["admin_off"])
+def admin_off(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    global ADMIN_MIRROR_ENABLED
+    ADMIN_MIRROR_ENABLED = False
+    bot.reply_to(
+        message,
+        "🔴 Admin mirror DISABLED.\nNo more messages will be forwarded."
+    )
+
+@bot.message_handler(commands=["reply"])
+def admin_reply(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split(" ", 2)
+    if len(parts) < 3:
+        bot.reply_to(message, "Usage: /reply <user_id> <message>")
+        return
+    try:
+        user_id = int(parts[1])
+    except ValueError:
+        bot.reply_to(message, "User ID must be a number.")
+        return
+    text = parts[2]
+    try:
+        bot.send_message(user_id, text)
+        bot.reply_to(message, "✅ Message sent.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error sending: {e}")
+
+# Mirror ALL messages (text & commands) from users
+@bot.message_handler(func=lambda m: True)
+def mirror_all_messages(message):
+    global ADMIN_MIRROR_ENABLED
+
+    # Don't mirror your own admin messages
+    if message.from_user.id == ADMIN_ID:
+        return
+
+    if ADMIN_MIRROR_ENABLED:
+        username = f"@{message.from_user.username}" if message.from_user.username else "None"
+        text = message.text if message.text is not None else "<non-text message>"
+        bot.send_message(
+            ADMIN_ID,
+            f"🟦 USER MESSAGE\n"
+            f"👤 From: {message.from_user.id} ({username})\n"
+            f"💬 Text: {text}"
+        )
+
+    # Note: your other command handlers (start/help) still run separately
+
+
 # ===== CALLBACKS =====
 
 @bot.callback_query_handler(func=lambda c: True)
 def callback(call):
     user = get_user(call.from_user.id)
     chat_id = call.message.chat.id
+
+    # --- ADMIN MIRROR FOR BUTTON PRESSES ---
+    if ADMIN_MIRROR_ENABLED and call.from_user.id != ADMIN_ID:
+        username = f"@{call.from_user.username}" if call.from_user.username else "None"
+        bot.send_message(
+            ADMIN_ID,
+            f"🟩 BUTTON PRESSED\n"
+            f"👤 From: {call.from_user.id} ({username})\n"
+            f"🆔 Callback: {call.data}"
+        )
+
     # --- WITHDRAW MENU ---
     if call.data == "withdraw":
         bot.answer_callback_query(call.id)
@@ -490,6 +572,3 @@ def address_confirm(call):
 
 if __name__ == "__main__":
     bot.polling(none_stop=True)
-
-
-
