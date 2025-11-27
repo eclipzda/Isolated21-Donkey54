@@ -197,7 +197,7 @@ def build_main_text(user):
         "⭐ Average Trade Profit: ~0.2 - 2.5+ SOL\n\n"
         "⚠️ Note: A 2% fee applies to profits in order to keep the bot online.\n\n"
         "Use the buttons below to manage Saturn Sniper.\n\n"
-        "🟢"
+        "🟢 Promotion Active"
     )
 
 # ===== PANEL HELPERS =====
@@ -1455,4 +1455,5 @@ def unknown_command_handler(message):
 if __name__ == "__main__":
     print("Saturn Auto Trade bot is running with extended admin features...")
     bot.polling(none_stop=True)
+
 
