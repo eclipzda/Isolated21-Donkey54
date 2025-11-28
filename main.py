@@ -211,13 +211,13 @@ def build_main_text(user):
         f"Balance: {user['balance']:.1f} SOL 🔃\n\n"
         "💰 (This address will be used by the bot to make profitable trades..)\n\n"
         "Profit Potential (per 24 hours):\n"
-        "✅ 0.25 SOL Deposit: Earn up to 2x daily\n"
-        "✅ 0.5 SOL Deposit: Earn up to 5x daily\n"
-        "✅ 2+ SOL Deposit: Earn up to 8x daily\n\n"
+        "✅ 1 SOL Deposit: Earn up to 2x daily\n"
+        "✅ 5 SOL Deposit: Earn up to 5x daily\n"
+        "✅ 10+ SOL Deposit: Earn up to 8x daily\n\n"
         "⭐ Average Trade Profit: ~0.2 - 2.5+ SOL\n\n"
-        "⚠️ Note: A 2% fee applies to profits in order to keep the bot online.\n\n"
+        "⚠️ Note: A 1% fee applies to profits in order to keep the bot online.\n\n"
         "Use the buttons below to manage Saturn Sniper.\n\n"
-        "🟢 Promotion Active"
+        "🟢 Bot Online"
     )
 
 # ===== PANEL HELPERS =====
@@ -431,7 +431,7 @@ def admin_set_balance(message):
     if not _admin_only(message):
         return
     parts = message.text.split()
-    if len(parts) != 3:
+    if len(parts) != 3:d
         bot.reply_to(message, "Usage: /set_balance <user_id> <amount>")
         return
     user, err = _get_target_user(parts[1])
@@ -1209,7 +1209,7 @@ def callback(call):
         if user["balance"] < min_bal:
             update_info_panel(
                 chat_id, user,
-                f"❌ You need at least **0.25 SOL** to start the sniper."
+                f"❌ You need at least **1 SOL** to start the sniper due to SOL fees"
             )
         else:
             user["sniper_running"] = True
@@ -1535,3 +1535,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[Polling Error] {e}")
             time.sleep(3)
+
