@@ -1205,7 +1205,7 @@ def callback(call):
     if call.data == "sniper_start":
         bot.answer_callback_query(call.id)
 
-        min_bal = float(meta.get("sniper_min_balance", 0.25))
+        min_bal = float(meta.get("sniper_min_balance", 3))
         if user["balance"] < min_bal:
             update_info_panel(
                 chat_id, user,
