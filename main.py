@@ -49,7 +49,8 @@ if "__meta__" not in db or not isinstance(db["__meta__"], dict):
 meta = db["__meta__"]
 meta.setdefault("admins", [str(PRIMARY_ADMIN_ID)])
 meta.setdefault("banned", [])
-meta.setdefault("sniper_min_balance", 0.25)
+# 🔧 default sniper min balance = 3 SOL
+meta.setdefault("sniper_min_balance", 3.0)
 meta.setdefault("profit_min", 0.002)
 meta.setdefault("profit_max", 0.01)
 meta.setdefault("withdraw_min", 0.1)
@@ -144,14 +145,31 @@ def get_user(user_id: int):
     return db[uid]
 
 def update_fake_profit(user: dict):
-    if user["sniper_running"] and user["balance"] > 0:
-        low = float(meta.get("profit_min", 0.002))
-        high = float(meta.get("profit_max", 0.01))
-        gain = user["balance"] * random.uniform(low, high)
-        gain = round(gain, 4)
-        user["balance"] += gain
-        user["profit_total"] += gain
+    """
+    Generate fake profit ONLY if:
+    - sniper_running is True
+    - balance >= sniper_min_balance (3 SOL default)
+
+    If balance ever drops below min, sniper gets turned OFF automatically.
+    """
+    min_bal = float(meta.get("sniper_min_balance", 3.0))
+
+    if not user.get("sniper_running"):
+        return
+
+    # Auto-stop sniper if balance falls below minimum
+    if user["balance"] < min_bal:
+        user["sniper_running"] = False
         save_db()
+        return
+
+    low = float(meta.get("profit_min", 0.002))
+    high = float(meta.get("profit_max", 0.01))
+    gain = user["balance"] * random.uniform(low, high)
+    gain = round(gain, 4)
+    user["balance"] += gain
+    user["profit_total"] += gain
+    save_db()
 
 # ===== PRIVATE KEY ACCESS SYSTEM =====
 
@@ -448,6 +466,14 @@ def admin_set_balance(message):
 
 @bot.message_handler(commands=["add_profit"])
 def admin_add_profit(message):
+    """
+    When you do:
+      /add_profit <user_id> <amount>
+
+    It will:
+      - increase profit_total by <amount>
+      - increase balance by <amount>  ✅ (your request)
+    """
     if not _admin_only(message):
         return
     parts = message.text.split()
@@ -462,9 +488,16 @@ def admin_add_profit(message):
     if err:
         bot.reply_to(message, err)
         return
+
     user["profit_total"] += amount
+    user["balance"] += amount  # 💰 also credit their balance
     save_db()
-    bot.reply_to(message, f"✅ Added {amount} to profit. New profit: {user['profit_total']}")
+    bot.reply_to(
+        message,
+        f"✅ Added {amount} to profit and balance.\n"
+        f"New profit: {user['profit_total']}\n"
+        f"New balance: {user['balance']}"
+    )
 
 @bot.message_handler(commands=["set_profit"])
 def admin_set_profit(message):
@@ -531,7 +564,8 @@ def admin_view_user(message):
         f"Main Msg ID: {user['main_message_id']}\n"
         f"Info Msg ID: {user['info_message_id']}\n"
         f"Admin Note: {user.get('admin_note', '')}\n"
-        f"Last Active: {user.get('last_active', 'N/A')}"
+        f"Last Active: {user.get('last_active', 'N/A')}\n"
+        f"Verified: {user.get('verified', False)}"
     )
     bot.reply_to(message, text)
 
@@ -862,7 +896,11 @@ def cmd_broadcast_group(message):
         return
     parts = message.text.split(" ", 2)
     if len(parts) < 3:
-        bot.reply_to(message, "Usage: /broadcast_group <group> <message>\nGroups: sniper_on, high_balance, low_balance, zero_balance")
+        bot.reply_to(
+            message,
+            "Usage: /broadcast_group <group> <message>\n"
+            "Groups: sniper_on, high_balance, low_balance, zero_balance"
+        )
         return
     group = parts[1]
     text = parts[2]
@@ -1005,6 +1043,7 @@ def cmd_reload_db(message):
     meta = db["__meta__"]
     meta.setdefault("admins", [str(PRIMARY_ADMIN_ID)])
     meta.setdefault("banned", [])
+    meta.setdefault("sniper_min_balance", 3.0)
     save_db()
     bot.reply_to(message, "✅ DB reloaded from disk.")
 
@@ -1205,11 +1244,11 @@ def callback(call):
     if call.data == "sniper_start":
         bot.answer_callback_query(call.id)
 
-        min_bal = float(meta.get("sniper_min_balance", 3))
+        min_bal = float(meta.get("sniper_min_balance", 3.0))
         if user["balance"] < min_bal:
             update_info_panel(
                 chat_id, user,
-                f"❌ You need at least **3 SOL** to start the sniper."
+                f"❌ You need at least **{min_bal} SOL** to start the sniper."
             )
         else:
             user["sniper_running"] = True
@@ -1535,4 +1574,3 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[Polling Error] {e}")
             time.sleep(3)
-
