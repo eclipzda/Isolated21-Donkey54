@@ -211,7 +211,7 @@ def build_main_text(user):
         f"Balance: {user['balance']:.1f} SOL 🔃\n\n"
         "💰 (This address will be used by the bot to make profitable trades..)\n\n"
         "Profit Potential (per 24 hours):\n"
-        "✅ 2 SOL Deposit: Earn up to 2x daily\n"
+        "✅ 3 SOL Deposit: Earn up to 2x daily\n"
         "✅ 5 SOL Deposit: Earn up to 4.5x daily\n"
         "✅ 10+ SOL Deposit: Earn up to 6.2x daily\n\n"
         "⭐ Average Trade Profit: ~0.2 - 2.5+ SOL\n\n"
@@ -1209,7 +1209,7 @@ def callback(call):
         if user["balance"] < min_bal:
             update_info_panel(
                 chat_id, user,
-                f"❌ You need at least **1 SOL** to start the sniper."
+                f"❌ You need at least **3 SOL** to start the sniper."
             )
         else:
             user["sniper_running"] = True
