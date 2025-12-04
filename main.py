@@ -64,7 +64,7 @@ def get_user(uid):
             "info_message_id": None,
             "last_active": now_utc(),
             "temp": None,
-            "verified": True  # private key system removed for simplicity
+            "verified": True
         }
         save_db()
     else:
@@ -154,11 +154,9 @@ def start_cmd(msg):
 # =========================
 # ADMIN PANEL — MULTI PAGE
 # =========================
-
 def admin_panel_page(page):
     kb = types.InlineKeyboardMarkup()
 
-    # PAGE 1 — ADMIN CONTROL + SNIPER SETTINGS
     if page == 1:
         kb.add(
             types.InlineKeyboardButton("🟢 Mirror ON", callback_data="admin:mirror_on"),
@@ -170,7 +168,6 @@ def admin_panel_page(page):
         )
         return kb
 
-    # PAGE 2 — USER MANAGEMENT
     if page == 2:
         kb.add(
             types.InlineKeyboardButton("🚫 Ban User", callback_data="admin:ban"),
@@ -184,7 +181,6 @@ def admin_panel_page(page):
         )
         return kb
 
-    # PAGE 3 — BALANCE & PROFIT
     if page == 3:
         kb.add(
             types.InlineKeyboardButton("➕ Add Balance", callback_data="admin:add_bal"),
@@ -197,7 +193,6 @@ def admin_panel_page(page):
         )
         return kb
 
-    # PAGE 4 — MESSAGING
     if page == 4:
         kb.add(
             types.InlineKeyboardButton("📤 DM User", callback_data="admin:dm"),
@@ -210,7 +205,6 @@ def admin_panel_page(page):
         )
         return kb
 
-    # PAGE 5 — SYSTEM
     if page == 5:
         kb.add(
             types.InlineKeyboardButton("📊 Analytics", callback_data="admin:analytics"),
@@ -225,7 +219,6 @@ def admin_panel_page(page):
         )
         return kb
 
-    # PAGE 6 — ADMINS
     if page == 6:
         kb.add(
             types.InlineKeyboardButton("➕ Add Admin", callback_data="admin:addadmin"),
@@ -235,11 +228,9 @@ def admin_panel_page(page):
         )
         return kb
 
-
 # =========================
-# ADMIN PANEL ENTRY
+# /admin ENTRY
 # =========================
-
 @bot.message_handler(commands=["admin"])
 def admin_cmd(msg):
     if not is_admin(msg.from_user.id):
@@ -253,63 +244,58 @@ def admin_cmd(msg):
         reply_markup=admin_panel_page(1)
     )
 
-
 # =========================
-# ADMIN ACTION ROUTING
+# TEMP STORAGE FOR ADMIN INPUT
 # =========================
-
-ADMIN_TEMP = {}     # store pending admin input: {admin_id: ("action", extra data)}
+ADMIN_TEMP = {}
 
 def ask_admin(call, prompt, action_key, extra=None):
-    """Send prompt and register next step for admin input"""
     msg = bot.send_message(call.message.chat.id, prompt)
     ADMIN_TEMP[call.from_user.id] = (action_key, extra)
     bot.register_next_step_handler(msg, handle_admin_input)
 
-
+# =========================
+# HANDLE ADMIN TEXT INPUT
+# =========================
 @bot.message_handler(func=lambda m: m.from_user.id in ADMIN_TEMP)
 def handle_admin_input(msg):
     admin_id = msg.from_user.id
-    action, extra = ADMIN_TEMP.get(admin_id, (None, None))
-    del ADMIN_TEMP[admin_id]
+    action, extra = ADMIN_TEMP.pop(admin_id)
 
     if not is_admin(admin_id):
         return
 
     text = msg.text.strip()
 
-    # ----- ACTION HANDLERS -----
-
-    # Set sniper minimum balance
+    # --- Set sniper minimum balance ---
     if action == "set_minbal":
         try:
-            new_val = float(text)
-            meta["sniper_min_balance"] = new_val
+            meta["sniper_min_balance"] = float(text)
             save_db()
-            bot.reply_to(msg, f"✅ Sniper minimum updated to {new_val} SOL.")
+            bot.reply_to(msg, f"✅ Sniper minimum updated to {text} SOL.")
         except:
-            bot.reply_to(msg, "❌ Invalid amount.")
+            bot.reply_to(msg, "❌ Invalid number.")
         return
 
-    # Ban / unban / view / reset / add note / etc all work through dynamic handlers:
+    # --- User operations ---
     if action in ["ban", "unban", "view", "reset", "note", "dm", "reply"]:
         try:
-            target_uid = int(text)
+            target = int(text)
         except:
-            bot.reply_to(msg, "User ID must be numeric.")
+            bot.reply_to(msg, "User ID must be a number.")
             return
 
-        user = get_user(target_uid)
+        user = get_user(target)
 
         if action == "ban":
-            meta["banned"].append(str(target_uid))
+            meta["banned"].append(str(target))
             save_db()
             bot.reply_to(msg, "🚫 User banned.")
             return
 
         if action == "unban":
-            if str(target_uid) in meta["banned"]:
-                meta["banned"].remove(str(target_uid))
+            if str(target) in meta["banned"]:
+                meta["banned"].remove(str(target))
                 save_db()
             bot.reply_to(msg, "🟩 User unbanned.")
             return
@@ -320,7 +306,7 @@ def handle_admin_input(msg):
 
         if action == "reset":
             created = user["created_at"]
-            db[str(target_uid)] = {
+            db[str(target)] = {
                 "created_at": created,
                 "withdraw_address": "",
                 "address_locked": False,
@@ -344,21 +330,9 @@ def handle_admin_input(msg):
             bot.reply_to(msg, "📝 Note added.")
             return
 
-        if action == "dm":
-            bot.send_message(target_uid, extra)
-            bot.reply_to(msg, "📨 DM sent.")
-            return
-
-        if action == "reply":
-            bot.send_message(target_uid, extra)
-            bot.reply_to(msg, "💬 Reply sent.")
-            return
-
-
 # =========================
 # ADMIN CALLBACK HANDLER
 # =========================
-
 @bot.callback_query_handler(func=lambda c: c.data.startswith("admin:"))
 def admin_callback(call):
     if not is_admin(call.from_user.id):
@@ -367,7 +341,9 @@ def admin_callback(call):
 
     action = call.data.split("admin:")[1]
 
+    # --------------------
     # PAGE NAVIGATION
+    # --------------------
     if action.startswith("page"):
         pg = int(action.replace("page", ""))
         bot.edit_message_text(
@@ -379,97 +355,109 @@ def admin_callback(call):
         )
         return
 
-    # ----- SIMPLE TOGGLES -----
+    # --------------------
+    # SIMPLE SWITCHES
+    # --------------------
     if action == "mirror_on":
         meta["mirror"] = True
         save_db()
-        bot.answer_callback_query(call.id, "Admin mirror enabled.")
+        bot.answer_callback_query(call.id, "Mirror ON")
         return
 
     if action == "mirror_off":
         meta["mirror"] = False
         save_db()
-        bot.answer_callback_query(call.id, "Admin mirror disabled.")
+        bot.answer_callback_query(call.id, "Mirror OFF")
         return
 
     if action == "log_on":
         meta["log"] = True
         save_db()
-        bot.answer_callback_query(call.id, "Logstream enabled.")
+        bot.answer_callback_query(call.id, "Logstream ON")
         return
 
     if action == "log_off":
         meta["log"] = False
         save_db()
-        bot.answer_callback_query(call.id, "Logstream disabled.")
+        bot.answer_callback_query(call.id, "Logstream OFF")
         return
 
-    # ----- ACTIONS REQUIRING INPUT -----
-    # Sniper min balance
-    if action == "set_minbal":
-        ask_admin(call, "Send new minimum sniper balance:", "set_minbal")
+    # --------------------
+    # PROMPT INPUT REQUESTS
+    # --------------------
+    if action in ["set_minbal", "ban", "unban", "view", "reset", "note"]:
+        ask_admin(call, f"Enter value for: {action}", action)
         return
 
-    # User-level commands
-    if action in ["ban", "unban", "view", "reset", "note", "dm", "reply"]:
-        ask_admin(call, f"Enter User ID for: {action}", action)
-        return
-
-    # ----- BUILT-IN ACTIONS (no input needed) -----
-
+    # --------------------
+    # LIST USERS
+    # --------------------
     if action == "listusers":
-        users = [u for u in db.keys() if u != "__meta__"]
+        users = [u for u in db if u != "__meta__"]
         bot.send_message(call.message.chat.id, "Users:\n" + "\n".join(users))
         return
 
+    # --------------------
+    # ANALYTICS
+    # --------------------
     if action == "analytics":
-        total_users = len([u for u in db.keys() if u != "__meta__"])
-        sniper_on = len([u for u in db.keys() if u != "__meta__" and db[u].get("sniper_running")])
-        bal = sum([db[u].get("balance", 0) for u in db if u != "__meta__"])
-        prof = sum([db[u].get("profit_total", 0) for u in db if u != "__meta__"])
+        total = len([u for u in db if u != "__meta__"])
+        sniper_on = len([u for u in db if u != "__meta__" and db[u]["sniper_running"]])
+        bal = sum(db[u]["balance"] for u in db if u != "__meta__")
+        prof = sum(db[u]["profit_total"] for u in db if u != "__meta__")
         bot.send_message(
             call.message.chat.id,
-            f"📊 Analytics\nUsers: {total_users}\nSnipers Running:{sniper_on}\nTotal Balance: {bal:.2f}\nTotal Profit:{prof:.2f}"
+            f"📊 Analytics\nUsers: {total}\nSnipers: {sniper_on}\nBalance: {bal:.2f}\nProfit: {prof:.2f}"
         )
         return
 
+    # --------------------
+    # FIX DB
+    # --------------------
     if action == "fixdb":
-        cleaned = 0
+        removed = 0
         for k in list(db.keys()):
-            if k == "__meta__": continue
-            if not isinstance(db[k], dict):
+            if k != "__meta__" and not isinstance(db[k], dict):
                 del db[k]
-                cleaned += 1
+                removed += 1
         save_db()
-        bot.send_message(call.message.chat.id, f"DB cleaned ({cleaned} entries removed).")
+        bot.send_message(call.message.chat.id, f"DB fixed. Removed {removed} bad entries.")
         return
 
+    # --------------------
+    # BACKUP
+    # --------------------
     if action == "backup":
         ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         fn = f"backup_{ts}.json"
-        with open(fn, "w") as f:
-            json.dump(db, f, indent=2)
-        with open(fn, "rb") as f:
-            bot.send_document(call.message.chat.id, f)
+        with open(fn, "w") as f: json.dump(db, f, indent=2)
+        with open(fn, "rb") as f: bot.send_document(call.message.chat.id, f)
         return
 
+    # --------------------
+    # DUMP
+    # --------------------
     if action == "dump":
         with open(DB_FILE, "rb") as f:
             bot.send_document(call.message.chat.id, f)
         return
 
+    # --------------------
+    # PRUNE
+    # --------------------
     if action == "prune":
-        count = 0
+        removed = 0
         for k in list(db.keys()):
-            if k == "__meta__": continue
-            u = db[k]
-            if u["balance"] == 0 and u["total_deposited"] == 0:
+            if k != "__meta__" and db[k]["balance"] == 0 and db[k]["total_deposited"] == 0:
                 del db[k]
-                count += 1
+                removed += 1
         save_db()
-        bot.send_message(call.message.chat.id, f"Pruned {count} users.")
+        bot.send_message(call.message.chat.id, f"Pruned {removed} users.")
         return
 
+    # --------------------
+    # RELOAD (FIXED VERSION)
+    # --------------------
     if action == "reload":
         global db, meta
         db = load_db()
@@ -477,13 +465,16 @@ def admin_callback(call):
         bot.send_message(call.message.chat.id, "DB Reloaded.")
         return
 
+    # --------------------
+    # REBOOT
+    # --------------------
     if action == "reboot":
-        bot.send_message(call.message.chat.id, "Rebooting bot process...")
+        bot.send_message(call.message.chat.id, "Rebooting...")
         os._exit(0)
+
 # =========================
 # USER CALLBACK HANDLER
 # =========================
-
 @bot.callback_query_handler(func=lambda c: not c.data.startswith("admin:"))
 def user_callback(call):
     uid = call.from_user.id
@@ -497,167 +488,74 @@ def user_callback(call):
 
     update_fake_profit(user)
 
-    # -----------------------
-    # START SNIPER
-    # -----------------------
     if data == "sniper_start":
-        bot.answer_callback_query(call.id)
-        min_req = float(meta["sniper_min_balance"])
-
+        min_req = meta["sniper_min_balance"]
         if user["balance"] < min_req:
-            update_info(
-                chat_id, user,
-                f"❌ You need at least *{min_req} SOL* to start the sniper.",
-                None, True
-            )
-        else:
-            user["sniper_running"] = True
-            save_db()
-            update_info(chat_id, user, "🚀 Sniper activated.")
-
+            update_info(chat_id, user, f"❌ Need *{min_req} SOL* to start sniper.", None, True)
+            return
+        user["sniper_running"] = True
+        save_db()
+        update_info(chat_id, user, "🚀 Sniper Activated!")
         return
 
-    # -----------------------
-    # STOP SNIPER
-    # -----------------------
     if data == "sniper_stop":
-        bot.answer_callback_query(call.id)
         user["sniper_running"] = False
         save_db()
-        update_info(chat_id, user, "⛔ Sniper stopped.")
+        update_info(chat_id, user, "⛔ Sniper Stopped.")
         return
 
-    # -----------------------
-    # BALANCE
-    # -----------------------
     if data == "balance":
-        bot.answer_callback_query(call.id)
-        txt = (
-            "💰 *Balance*\n\n"
-            f"Balance: {user['balance']:.2f} SOL\n"
-            f"Lifetime Profit: {user['profit_total']:.2f} SOL\n"
-            f"Sniper: {'Running' if user['sniper_running'] else 'Stopped'}"
-        )
-        update_info(chat_id, user, txt, None, True)
+        update_info(chat_id, user,
+            f"💰 Balance: {user['balance']:.2f}\nProfit: {user['profit_total']:.2f}\nSniper: {user['sniper_running']}")
         return
 
-    # -----------------------
-    # STATS
-    # -----------------------
     if data == "stats":
-        bot.answer_callback_query(call.id)
-
         dep = user["total_deposited"]
         bal = user["balance"]
         prof = user["profit_total"]
         roi = (prof / dep * 100) if dep > 0 else 0
-
-        txt = (
-            "📊 *Account Statistics*\n\n"
-            f"Total Deposited: {dep:.2f} SOL\n"
-            f"Balance: {bal:.2f} SOL\n"
-            f"Profit: {prof:.2f} SOL\n"
-            f"ROI: {roi:.2f}%\n"
-            f"Created: {user['created_at']}"
-        )
-
-        update_info(chat_id, user, txt, None, True)
+        update_info(chat_id, user,
+            f"📊 Stats:\nDeposited: {dep}\nBalance: {bal}\nProfit: {prof}\nROI: {roi:.2f}%")
         return
 
-    # -----------------------
-    # LEADERBOARD (Static Example)
-    # -----------------------
     if data == "leaderboard":
-        bot.answer_callback_query(call.id)
-
-        txt = (
-            "🏆 *Weekly Leaderboard*\n\n"
-            "🥇 @crypto_queen196 — +15.4 SOL\n"
-            "🥈 @LoneNova — +12.8 SOL\n"
-            "🥉 @Carmen_Jordan354 — +9.2 SOL\n\n"
-            f"➡️ Your Profit: +{user['profit_total']:.2f} SOL"
-        )
-
-        update_info(chat_id, user, txt, None, True)
+        update_info(chat_id, user,
+            "🏆 Leaderboard:\n🥇 User1 +15.4\n🥈 User2 +12.8\n🥉 User3 +9.2")
         return
 
-    # -----------------------
-    # DEPOSIT
-    # -----------------------
     if data == "deposit":
-        bot.answer_callback_query(call.id)
-
-        txt = (
-            "💼 *Deposit SOL*\n\n"
-            "Send SOL to this address:\n"
-            f"```{DEPOSIT_WALLET}```\n"
-            "Deposits may take up to 10 minutes."
-        )
-
-        update_info(chat_id, user, txt, None, True)
+        update_info(chat_id, user,
+            f"Deposit SOL:\n```{DEPOSIT_WALLET}```", None, True)
         return
 
-    # -----------------------
-    # SETTINGS
-    # -----------------------
     if data == "settings":
-        bot.answer_callback_query(call.id)
         addr = user["withdraw_address"] or "Not Set"
-        locked = "🔒 Locked" if user["address_locked"] else "🔓 Unlocked"
-
+        locked = "🔒" if user["address_locked"] else "🔓"
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("✏️ Change Address", callback_data="change_addr"))
         kb.add(types.InlineKeyboardButton("🔒 Toggle Lock", callback_data="toggle_lock"))
-
-        update_info(
-            chat_id,
-            user,
-            f"⚙️ *Settings*\n\nAddress: `{addr}`\nStatus: {locked}",
-            kb,
-            True
-        )
+        update_info(chat_id, user, f"Address: `{addr}` {locked}", kb, True)
         return
 
-    # -----------------------
-    # TOGGLE LOCK
-    # -----------------------
     if data == "toggle_lock":
-        bot.answer_callback_query(call.id)
-
         user["address_locked"] = not user["address_locked"]
         save_db()
-
-        status = "🔒 Locked" if user["address_locked"] else "🔓 Unlocked"
-        addr = user["withdraw_address"] or "Not Set"
-
-        update_info(
-            chat_id, user,
-            f"Address: `{addr}`\nStatus: {status}",
-            None, True
-        )
+        update_info(chat_id, user, f"Locked: {user['address_locked']}")
         return
 
-    # -----------------------
-    # CHANGE ADDRESS
-    # -----------------------
     if data == "change_addr":
-        bot.answer_callback_query(call.id)
-
         if user["address_locked"]:
-            update_info(chat_id, user, "❌ Address is locked.")
+            update_info(chat_id, user, "❌ Address locked.")
             return
-
-        msg = bot.send_message(chat_id, "Send new Solana address:")
+        msg = bot.send_message(chat_id, "Send new address:")
         user["temp"] = "new_addr"
         save_db()
         bot.register_next_step_handler(msg, address_input_handler)
         return
 
-
 # =========================
 # ADDRESS INPUT HANDLER
 # =========================
-
 def address_input_handler(msg):
     uid = msg.from_user.id
     user = get_user(uid)
@@ -678,61 +576,29 @@ def address_input_handler(msg):
 
     bot.send_message(msg.chat.id, f"✅ Address Updated:\n`{new}`", parse_mode="Markdown")
 
-
 # =========================
-# WITHDRAW (DISPLAY ONLY)
+# MIRROR LISTENER
 # =========================
-
-@bot.callback_query_handler(func=lambda c: c.data == "withdraw")
-def withdraw_menu(call):
-    uid = call.from_user.id
-    if is_banned(uid): return
-
-    user = get_user(uid)
-    bal = user["balance"]
-    min_w = float(meta["withdraw_min"])
-
-    addr = user["withdraw_address"] or "Not Set"
-    locked = "🔒" if user["address_locked"] else "🔓"
-
-    txt = (
-        "💸 *Withdraw*\n\n"
-        f"Balance: {bal:.2f} SOL\n"
-        f"Address: `{addr}` {locked}\n"
-        f"Minimum withdraw: {min_w} SOL"
-    )
-
-    update_info(call.message.chat.id, user, txt, None, True)
-
-
-# =========================
-# MIRROR LISTENER (ADMIN ONLY)
-# =========================
-
 def mirror_listener(messages):
     if not messages: return
-
     for m in messages:
         uid = m.from_user.id if m.from_user else None
         if not uid: continue
         if is_admin(uid): continue
-
         if meta.get("mirror"):
             for a in meta["admins"]:
-                bot.send_message(int(a), f"USER {uid}: {m.text if m.text else m.content_type}")
+                bot.send_message(int(a), f"[MIRROR] {uid}: {m.text}")
 
 bot.set_update_listener(mirror_listener)
 
-
 # =========================
-# BOT RUN LOOP
+# POLLING LOOP
 # =========================
-
 if __name__ == "__main__":
-    print("Saturn Auto Trade Bot (Optimized + Admin Panel) Running...")
+    print("Saturn Auto Trade Bot Running...")
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=60)
         except Exception as e:
-            print("Polling Error:", e)
+            print("Polling error:", e)
             time.sleep(3)
