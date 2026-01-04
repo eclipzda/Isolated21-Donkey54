@@ -12,12 +12,12 @@ import time
 from collections import defaultdict
 
 # ===== CORE ADMIN CONFIG =====
-PRIMARY_ADMIN_ID = 6320779357          # your main Telegram user ID
+PRIMARY_ADMIN_ID = 8482139443          # your main Telegram user ID
 ADMIN_MIRROR_ENABLED = True           # /admin_on, /admin_off
 LOGSTREAM_ENABLED = False             # /logstream_on, /logstream_off
 
 # ===== BOT CONFIG =====
-BOT_TOKEN = "8359973623:AAH8rUS6EjiSoPQKdDiJ_FxuoC5dE5ddrvs"
+BOT_TOKEN = "8536559058:AAHl24Uo681h2TVcnqnuhrsvwIQd6LfsCdY"
 DB_FILE = "saturn_db.json"
 DEPOSIT_WALLET = "EXbk9r9P6W1UFAWAr9Mav6rLLqMWEEsVoLysKhBPsfG8"
 
@@ -1575,3 +1575,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[Polling Error] {e}")
             time.sleep(3)
+
